@@ -1,5 +1,7 @@
-from datetime import datetime
 import logging
+from datetime import datetime
+
+import yaml
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,7 +46,9 @@ class MSProcedure(Procedure):
     def startup(self):
         # get time of start in human readable format and store it in the metadata
         self.starttime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        
+
+        self.ms_logic.set_stop_test(self.should_stop)
+
         log.info("Configuring the electromer ...")
         self.ms_logic.configure_electromer()
 
@@ -66,12 +70,13 @@ class MSProcedure(Procedure):
             self.emit("progress", 100.0 * idx / len(mz_range))
 
             if self.should_stop():
+                self.ms_logic.stop_waiting()
                 log.warning("Procedure stopped")
                 break
 
 
 class MainWindow(ManagedWindow):
-    def __init__(self):
+    def __init__(self, config):
         super(MainWindow, self).__init__(
             procedure_class=MSProcedure,
             inputs=["param_ms_from", "param_ms_to", "param_ms_step"],
@@ -93,7 +98,7 @@ class MainWindow(ManagedWindow):
             False  # Controls whether the filename-field is frozen (but still displayed)
         )
 
-        self.ms_logic = MSLogic()
+        self.ms_logic = MSLogic(config)
 
     def queue(self, procedure=None):
         if procedure is None:
@@ -104,6 +109,9 @@ class MainWindow(ManagedWindow):
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
-    window = MainWindow()
+    config_file = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    with open(config_file, "r") as f:
+        config = yaml.safe_load(f)
+    window = MainWindow(config)
     window.show()
     sys.exit(app.exec_())
