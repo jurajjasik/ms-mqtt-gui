@@ -1,0 +1,9 @@
+topic_base_electromer: "keithley6517b"
+device_electromer: "Keithley6517B"
+
+topic_base_mass_filter: "qsource3"
+device_name_mass_filter: "Qsource3"
+
+mqtt_broker: "localhost"
+mqtt_port: 1883
+mqtt_connection_timeout: 60
