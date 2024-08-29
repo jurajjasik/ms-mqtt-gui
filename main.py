@@ -50,13 +50,13 @@ class MSProcedure(Procedure):
         self.ms_logic.set_stop_test(self.should_stop)
 
         log.info("Configuring the electromer ...")
-        self.ms_logic.configure_electromer()
+        self.ms_logic.configure_electromer(self.electromer_metadata)
 
         log.info("Configuring the mass filter ...")
-        self.ms_logic.configure_mass_filter()
+        self.ms_logic.configure_mass_filter(self.mass_filter_metadata)
 
-        self.electromer_metadata = self.ms_logic.get_metadata_electromer()
-        self.mass_filter_metadata = self.ms_logic.get_metadata_mass_filter()
+        self.electromer_metadata = self.ms_logic.get_metadata_electromer_json()
+        self.mass_filter_metadata = self.ms_logic.get_metadata_mass_filter_json()
 
     def execute(self):
         mz_range = np.arange(self.param_ms_from, self.param_ms_to, self.param_ms_step)

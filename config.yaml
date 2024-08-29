@@ -1,5 +1,5 @@
 topic_base_electromer: "keithley6517b"
-device_electromer: "Keithley6517B"
+device_name_electromer: "Keithley6517B"
 
 topic_base_mass_filter: "qsource3"
 device_name_mass_filter: "Qsource3"
