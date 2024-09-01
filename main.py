@@ -99,6 +99,7 @@ class MainWindow(ManagedWindow):
         )
 
         self.ms_logic = MSLogic(config)
+        self.ms_logic.start()
 
     def queue(self, procedure=None):
         if procedure is None:
