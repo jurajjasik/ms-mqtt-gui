@@ -12,6 +12,8 @@ import sys
 from time import sleep, time
 
 import numpy as np
+import PyQt5
+import pyqtgraph as pg
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 from pymeasure.experiment import (
@@ -87,7 +89,7 @@ class MainWindow(ManagedWindow):
         self.setWindowTitle("Mass Spec")
 
         self.filename = r"MS"  # Sets default filename
-        self.directory = r"c:\Users\jasik\Documents\GitHub\ms-mqtt-gui\test_data"  # Sets default directory
+        self.directory = r""  # Sets default directory
         self.store_measurement = False  # Controls the 'Save data' toggle
         self.file_input.extensions = [
             "csv",
