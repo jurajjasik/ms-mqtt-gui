@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
-# log.setLevel(logging.DEBUG)
+log.setLevel(logging.DEBUG)
 
 TIMEOUT_CONFIRMATION = 1  # seconds
 
@@ -129,7 +129,7 @@ class MSLogic:
                 event = self.confirmation_events.get(confirmation_id)
                 if event is not None:
                     event.set()
-                    event.payload = sender_payload
+                    event.payload = payload
 
     def register_confirmation(self, confirmation_id):
         event = threading.Event()
@@ -399,6 +399,7 @@ class MSLogic:
         """
         confirmation_id = self.publish_measure_current()
         payload = self.wait_for_confirmation(confirmation_id)
+        log.debug(f"Measured current payload: {payload}")
         if "value" in payload:
             return payload["value"]
         else:
