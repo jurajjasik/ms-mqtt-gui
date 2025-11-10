@@ -1,0 +1,5 @@
+numpy
+paho-mqtt
+PyMeasure
+PyQt5
+pyyaml
