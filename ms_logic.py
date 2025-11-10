@@ -13,22 +13,28 @@ log.setLevel(logging.DEBUG)
 TIMEOUT_CONFIRMATION = 1  # seconds
 
 
-def unique_confirmation_id():
+def unique_confirmation_id() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+class EventWithPayload(threading.Event):
+    def __init__(self):
+        super().__init__()
+        self.payload: dict = {}
 
 
 class MSLogic:
     def __init__(self, config):
         self.metadata_mass_filter = {}
-        self.metadata_electromer = {}
+        self.metadata_detector = {}
 
         self.should_stop = None
-        self.confirmation_events = {}
+        self.confirmation_events: dict[str, EventWithPayload] = {}
         self.config = config
         self.topic_base_mass_filter = config["topic_base_mass_filter"]
-        self.topic_base_electromer = config["topic_base_electromer"]
+        self.topic_base_detector = config["topic_base_detector"]
         self.device_name_mass_filter = config["device_name_mass_filter"]
-        self.device_name_electromer = config["device_name_electromer"]
+        self.device_name_detector = config["device_name_detector"]
 
         self.client = mqtt.Client(
             clean_session=True,
@@ -41,11 +47,15 @@ class MSLogic:
         self.should_stop = should_stop
 
     def start(self):
-        self.client.connect(
-            self.config["mqtt_broker"],
-            self.config["mqtt_port"],
-            self.config["mqtt_connection_timeout"],
-        )
+        try:
+            self.client.connect(
+                self.config["mqtt_broker"],
+                self.config["mqtt_port"],
+                self.config["mqtt_connection_timeout"],
+            )
+        except Exception as e:
+            log.error(f"Failed to connect to MQTT broker: {e}")
+            return
         self.client.loop_start()
 
     def on_connect(self, client, userdata, flags, rc):
@@ -59,10 +69,10 @@ class MSLogic:
         )
 
         self.client.subscribe(
-            f"{self.topic_base_electromer}/response/{self.device_name_electromer}/#"
+            f"{self.topic_base_detector}/response/{self.device_name_detector}/#"
         )
         self.client.subscribe(
-            f"{self.topic_base_electromer}/error/{self.device_name_electromer}"
+            f"{self.topic_base_detector}/error/{self.device_name_detector}"
         )
 
     def on_message(self, client, userdata, message):
@@ -76,14 +86,14 @@ class MSLogic:
         log.debug(f"Received message on topic {topic} with payload {payload}")
 
         if topic.startswith(
-            f"{self.topic_base_mass_filter}/error/{self.topic_base_electromer}/"
+            f"{self.topic_base_mass_filter}/error/{self.topic_base_detector}/"
         ):
             raise Exception(f"Error from mass filter: {payload}")
 
         elif topic.startswith(
-            f"{self.topic_base_electromer}/error/{self.device_name_electromer}/"
+            f"{self.topic_base_detector}/error/{self.device_name_detector}/"
         ):
-            raise Exception(f"Error from electromer: {payload}")
+            raise Exception(f"Error from detector: {payload}")
 
         elif topic.startswith(
             f"{self.topic_base_mass_filter}/response/{self.device_name_mass_filter}/"
@@ -104,21 +114,14 @@ class MSLogic:
                 self.handle_response_dc_offst(payload)
 
         elif topic.startswith(
-            f"{self.topic_base_mass_filter}/state/{self.topic_base_electromer}/"
+            f"{self.topic_base_mass_filter}/state/{self.topic_base_detector}/"
         ):
             self.handle_response_state(payload)
 
         elif topic.startswith(
-            f"{self.topic_base_electromer}/response/{self.device_name_electromer}/"
+            f"{self.topic_base_detector}/response/{self.device_name_detector}/"
         ):
-            if topic.endswith("/current"):
-                self.handle_response_current(payload)
-            elif topic.endswith("/current_range"):
-                self.handle_response_current_range(payload)
-            elif topic.endswith("/nplc"):
-                self.handle_response_nplc(payload)
-            elif topic.endswith("/source_voltage"):
-                self.handle_response_source_voltage(payload)
+            self.handle_response_detector(payload)
 
     def confirme_payload(self, payload):
         log.debug(f"Confirming payload: {payload}")
@@ -132,11 +135,13 @@ class MSLogic:
                     event.payload = payload
 
     def register_confirmation(self, confirmation_id):
-        event = threading.Event()
+        event = EventWithPayload()
         self.confirmation_events[confirmation_id] = event
         log.debug(f"Registered confirmation event for '{confirmation_id}'")
 
-    def wait_for_confirmation(self, confirmation_id, timeout=TIMEOUT_CONFIRMATION):
+    def wait_for_confirmation(
+        self, confirmation_id: str, timeout=TIMEOUT_CONFIRMATION
+    ) -> dict | None:
         """
         Waits for the confirmation with the specified ID.
 
@@ -152,12 +157,13 @@ class MSLogic:
         log.debug(f"Waiting for confirmation of '{confirmation_id}'")
         if confirmation_id not in self.confirmation_events:
             log.debug(f"Confirmation event for '{confirmation_id}' not found")
-            return
+            return None
 
         event = self.confirmation_events[confirmation_id]
 
         # wait for the confirmation
         # resolution is 0.1 seconds
+        flag = False
         for t in range(int(timeout * 10)):
             flag = event.wait(timeout=0.1)
             if flag or (self.should_stop is not None and self.should_stop()):
@@ -184,12 +190,12 @@ class MSLogic:
 
         return confirmation_id
 
-    def publish_measure_current(self):
-        # publish MQTT message to measure the current
-        confirmation_id = f"measure current, ID={unique_confirmation_id()}"
+    def publish_measure_signal(self):
+        # publish MQTT message to measure the signal
+        confirmation_id = f"measure signal, ID={unique_confirmation_id()}"
         self.register_confirmation(confirmation_id)
         self.publish(
-            f"{self.topic_base_electromer}/cmnd/{self.device_name_electromer}/current",
+            f"{self.topic_base_detector}/cmnd/{self.device_name_detector}",
             json.dumps({"confirmation_id": confirmation_id}),
         )
         return confirmation_id
@@ -250,66 +256,27 @@ class MSLogic:
             log.info(f"Mass filter frequency: {payload['frequency']}")
             self.metadata_mass_filter["frequency"] = payload["frequency"]
 
-    # Electromer responses
-    def handle_response_current(self, payload):
-        # handle the response from the electromer
+    # Detector responses
+    def handle_response_detector(self, payload):
+        # handle the response from the detector
         self.confirme_payload(payload)
 
-    def handle_response_current_range(self, payload):
-        if "value" in payload:
-            log.info(f"Electromer current range: {payload['value']}")
-            self.metadata_electromer["current_range"] = payload["value"]
-
-    def handle_response_nplc(self, payload):
-        if "value" in payload:
-            log.info(f"Electromer NPLC: {payload['value']}")
-            self.metadata_electromer["nplc"] = payload["value"]
-
-    def handle_response_source_voltage(self, payload):
-        if "value" in payload:
-            log.info(f"Electromer source voltage: {payload['value']}")
-            self.metadata_electromer["source_voltage"] = payload["value"]
-
-    def configure_electromer(self, json_metadata):
+    def configure_detector(self, json_metadata):
         metadata = json.loads(json_metadata)
 
         # Skip if the metadata are empty dictionary - no configuration
         if not metadata:
-            log.debug("No electromer configuration provided")
+            log.debug("No detector configuration provided")
             return
 
-        nplc = 1.0
-        auto_range = True
-        current_range = 0.0
+        for key in metadata:
+            log.info(f"Detector configuration: {key} = {metadata[key]}")
+            self.publish(
+                topic=f"{self.topic_base_detector}/cmnd/{self.device_name_detector}/{key}",
+                payload=json.dumps({"value": metadata[key]}),
+            )
 
-        if "nplc" in metadata:
-            try:
-                nplc = float(metadata["nplc"])
-            except ValueError:
-                pass
-
-        if "current_range" in metadata:
-            try:
-                current_range = float(metadata["current_range"])
-                auto_range = False
-            except ValueError:
-                pass
-
-        log.info(
-            f"Configuring electromer with NPLC={nplc}, current range={current_range}, auto range={auto_range}"
-        )
-        self.publish(
-            topic=f"{self.topic_base_electromer}/cmnd/{self.device_name_electromer}/measure_current",
-            payload=json.dumps(
-                {
-                    "nplc": nplc,
-                    "current": current_range,
-                    "auto_range": auto_range,
-                }
-            ),
-        )
-
-        log.info("Electromer configured")
+        log.info("Detector configured")
 
     def configure_mass_filter(self, json_metadata):
         metadata = json.loads(json_metadata)
@@ -318,55 +285,14 @@ class MSLogic:
             log.debug("No mass filter configuration provided")
             return
 
-        if "range" in metadata:
-            log.info(f"Setting mass filter range to {metadata['range']}")
+        for key in metadata:
+            log.info(f"Mass filter configuration: {key} = {metadata[key]}")
             self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/range",
-                payload=json.dumps({"value": metadata["range"]}),
+                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/{key}",
+                payload=json.dumps({"value": metadata[key]}),
             )
 
-        if "is_dc_on" in metadata:
-            log.info(f"Setting mass filter DC_ON to {metadata['is_dc_on']}")
-            self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/is_dc_on",
-                payload=json.dumps({"value": metadata["is_dc_on"]}),
-            )
-
-        if "is_rod_polarity_positive" in metadata:
-            log.info(
-                f"Setting mass filter ROD_POLARITY_POSITIVE to {metadata['is_rod_polarity_positive']}"
-            )
-            self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/is_rod_polarity_positive",
-                payload=json.dumps({"value": metadata["is_rod_polarity_positive"]}),
-            )
-
-        if "calib_pnts_dc" in metadata:
-            log.info(
-                f"Setting mass filter calib_pnts_dc to {metadata['calib_pnts_dc']}"
-            )
-            self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/calib_pnts_dc",
-                payload=json.dumps({"value": metadata["calib_pnts_dc"]}),
-            )
-
-        if "calib_pnts_rf" in metadata:
-            log.info(
-                f"Setting mass filter calib_pnts_rf to {metadata['calib_pnts_rf']}"
-            )
-            self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/calib_pnts_rf",
-                payload=json.dumps({"value": metadata["calib_pnts_rf"]}),
-            )
-
-        if "dc_offst" in metadata:
-            log.info(f"Setting mass filter dc_offst to {metadata['dc_offst']}")
-            self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/dc_offst",
-                payload=json.dumps({"value": metadata["dc_offst"]}),
-            )
-
-    def set_mz(self, mz):
+    def set_mz(self, mz: float) -> float | None:
         """
         Sets the m/z value and waits for confirmation.
 
@@ -381,26 +307,26 @@ class MSLogic:
         """
         confirmation_id = self.publish_set_mz(mz)
         payload = self.wait_for_confirmation(confirmation_id)
-        if "value" in payload:
+        if payload is not None and "value" in payload:
             return payload["value"]
         else:
             return None
 
-    def measure_current(self):
+    def measure_signal(self):
         """
-        Measures the current and returns the value.
+        Measures the signal and returns the value.
 
         Returns:
-            float: The measured current value.
-            None: If the current value cannot be measured.
+            float: The measured signal value.
+            None: If the signal value cannot be measured.
 
         Raises:
             TimeoutError: If the confirmation is not received within the timeout.
         """
-        confirmation_id = self.publish_measure_current()
+        confirmation_id = self.publish_measure_signal()
         payload = self.wait_for_confirmation(confirmation_id)
-        log.debug(f"Measured current payload: {payload}")
-        if "value" in payload:
+        log.debug(f"Measured signal payload: {payload}")
+        if payload is not None and "value" in payload:
             return payload["value"]
         else:
             return None
@@ -408,8 +334,8 @@ class MSLogic:
     def get_metadata_mass_filter_json(self):
         return json.dumps(self.metadata_mass_filter)
 
-    def get_metadata_electromer_json(self):
-        return json.dumps(self.metadata_electromer)
+    def get_metadata_detector_json(self):
+        return json.dumps(self.metadata_detector)
 
     def publish(self, topic, payload):
         log.debug(f"Publishing to: {topic}, with payload: {payload}")

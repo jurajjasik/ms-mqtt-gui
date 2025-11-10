@@ -1,9 +1,10 @@
-topic_base_electromer: "keithley6517b"
-device_name_electromer: "Keithley6517B"
+topic_base_detector: "lqt/picoscope"
+device_name_detector: "trigger_rate"
 
-topic_base_mass_filter: "qsource3"
+topic_base_mass_filter: "lqt/qsource3"
 device_name_mass_filter: "QSource3"
 
-mqtt_broker: "rpi-quad"
+mqtt_broker: "147.231.28.79"
+# mqtt_broker: "localhost"
 mqtt_port: 1883
 mqtt_connection_timeout: 60

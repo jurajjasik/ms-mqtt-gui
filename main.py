@@ -38,9 +38,9 @@ class MSProcedure(Procedure):
     # metadata
     starttime = Metadata("Start time", default="")
     mass_filter_metadata = Metadata("Mass filter", default="{}")
-    electromer_metadata = Metadata("Electromer", default="{}")
+    detector_metadata = Metadata("Detector", default="{}")
 
-    DATA_COLUMNS = ["m/z", "I"]
+    DATA_COLUMNS = ["m/z", "signal"]
 
     def post_init(self, ms_logic: MSLogic):
         self.ms_logic = ms_logic
@@ -51,13 +51,13 @@ class MSProcedure(Procedure):
 
         self.ms_logic.set_stop_test(self.should_stop)
 
-        log.info("Configuring the electromer ...")
-        self.ms_logic.configure_electromer(self.electromer_metadata)
+        log.info("Configuring the detector ...")
+        self.ms_logic.configure_detector(self.detector_metadata)
 
         log.info("Configuring the mass filter ...")
         self.ms_logic.configure_mass_filter(self.mass_filter_metadata)
 
-        self.electromer_metadata = self.ms_logic.get_metadata_electromer_json()
+        self.detector_metadata = self.ms_logic.get_metadata_detector_json()
         self.mass_filter_metadata = self.ms_logic.get_metadata_mass_filter_json()
 
     def execute(self):
@@ -65,14 +65,13 @@ class MSProcedure(Procedure):
         for idx, mz in enumerate(mz_range):
             log.debug("Setting m/z = %.2f", mz)
             self.ms_logic.set_mz(mz)
-            current = self.ms_logic.measure_current()
-            log.debug("Current = %.2f", current)
-            data = {"m/z": mz, "I": current}
+            signal = self.ms_logic.measure_signal()
+            log.debug("Signal = %.2f", signal)
+            data = {"m/z": mz, "signal": signal}
             self.emit("results", data)
             self.emit("progress", 100.0 * idx / len(mz_range))
 
             if self.should_stop():
-                self.ms_logic.stop_waiting()
                 log.warning("Procedure stopped")
                 break
 
@@ -84,7 +83,7 @@ class MainWindow(ManagedWindow):
             inputs=["param_ms_from", "param_ms_to", "param_ms_step"],
             displays=["param_ms_from", "param_ms_to", "param_ms_step"],
             x_axis="m/z",
-            y_axis="I",
+            y_axis="signal",
         )
         self.setWindowTitle("Mass Spec")
 
