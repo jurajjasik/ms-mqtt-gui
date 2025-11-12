@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 
 TIMEOUT_CONFIRMATION = 1  # seconds
 
