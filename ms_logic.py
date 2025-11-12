@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+import time
 from datetime import datetime
 
 import paho.mqtt.client as mqtt
@@ -67,13 +68,12 @@ class MSLogic:
         self.client.subscribe(
             f"{self.topic_base_mass_filter}/error/{self.device_name_mass_filter}"
         )
+        self.client.subscribe(
+            f"{self.topic_base_mass_filter}/status/{self.device_name_mass_filter}/#"
+        )
 
-        self.client.subscribe(
-            f"{self.topic_base_detector}/response/{self.device_name_detector}/#"
-        )
-        self.client.subscribe(
-            f"{self.topic_base_detector}/error/{self.device_name_detector}"
-        )
+        self.client.subscribe(f"{self.topic_base_detector}/response/#")
+        self.client.subscribe(f"{self.topic_base_detector}/error/#")
 
     def on_message(self, client, userdata, message):
         topic = message.topic
@@ -113,15 +113,18 @@ class MSLogic:
             elif topic.endswith("/dc_offst"):
                 self.handle_response_dc_offst(payload)
 
-        elif topic.startswith(
-            f"{self.topic_base_mass_filter}/state/{self.topic_base_detector}/"
+        elif topic.endswith(
+            f"{self.topic_base_mass_filter}/status/{self.device_name_mass_filter}/state"
         ):
             self.handle_response_state(payload)
 
-        elif topic.startswith(
-            f"{self.topic_base_detector}/response/{self.device_name_detector}/"
+        elif topic.endswith(
+            f"{self.topic_base_detector}/response/{self.device_name_detector}"
         ):
             self.handle_response_detector(payload)
+
+        elif topic.endswith(f"{self.topic_base_detector}/response/settings"):
+            self.handle_response_detector_settings(payload)
 
     def confirme_payload(self, payload):
         log.debug(f"Confirming payload: {payload}")
@@ -237,15 +240,15 @@ class MSLogic:
 
     def handle_response_state(self, payload):
         if "range" in payload:
-            log.info(f"Mass filter state range: {payload['range']}")
+            log.debug(f"Mass filter state range: {payload['range']}")
             self.metadata_mass_filter["range"] = payload["range"]
 
         if "is_dc_on" in payload:
-            log.info(f"Mass filter state is DC on: {payload['is_dc_on']}")
+            log.debug(f"Mass filter state is DC on: {payload['is_dc_on']}")
             self.metadata_mass_filter["is_dc_on"] = payload["is_dc_on"]
 
         if "is_rod_polarity_positive" in payload:
-            log.info(
+            log.debug(
                 f"Mass filter state rod polarity positive: {payload['is_rod_polarity_positive']}"
             )
             self.metadata_mass_filter["is_rod_polarity_positive"] = payload[
@@ -253,7 +256,7 @@ class MSLogic:
             ]
 
         if "frequency" in payload:
-            log.info(f"Mass filter frequency: {payload['frequency']}")
+            log.debug(f"Mass filter frequency: {payload['frequency']}")
             self.metadata_mass_filter["frequency"] = payload["frequency"]
 
     # Detector responses
@@ -261,36 +264,66 @@ class MSLogic:
         # handle the response from the detector
         self.confirme_payload(payload)
 
+    def handle_response_detector_settings(self, payload):
+        if "settings" in payload:
+            if "current_settings" in payload["settings"]:
+                log.info(
+                    f"Detector current setting: {payload['settings']['current_settings']}"
+                )
+                self.metadata_detector["current_settings"] = payload["settings"][
+                    "current_settings"
+                ]
+
     def configure_detector(self, json_metadata):
         metadata = json.loads(json_metadata)
 
         # Skip if the metadata are empty dictionary - no configuration
-        if not metadata:
-            log.debug("No detector configuration provided")
-            return
-
-        for key in metadata:
-            log.info(f"Detector configuration: {key} = {metadata[key]}")
-            self.publish(
-                topic=f"{self.topic_base_detector}/cmnd/{self.device_name_detector}/{key}",
-                payload=json.dumps({"value": metadata[key]}),
+        if metadata and "current_settings" in metadata:
+            log.info(
+                f"Configuring detector current setting to: {metadata['current_settings']}"
             )
+
+            self.publish(
+                topic=f"{self.topic_base_detector}/cmnd/settings",
+                payload=json.dumps(metadata["current_settings"]),
+            )
+
+        # send empty payload to get the detector to respond with its settings
+        self.publish(
+            topic=f"{self.topic_base_detector}/cmnd/settings",
+            payload=b"",
+        )
+        time.sleep(1)  # wait for the detector to respond
 
         log.info("Detector configured")
 
     def configure_mass_filter(self, json_metadata):
         metadata = json.loads(json_metadata)
 
-        if not metadata:
-            log.debug("No mass filter configuration provided")
-            return
-
-        for key in metadata:
-            log.info(f"Mass filter configuration: {key} = {metadata[key]}")
-            self.publish(
-                topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/{key}",
-                payload=json.dumps({"value": metadata[key]}),
-            )
+        if metadata:
+            for key in metadata:
+                log.info(f"Mass filter configuration: {key} = {metadata[key]}")
+                self.publish(
+                    topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/{key}",
+                    payload=json.dumps({"value": metadata[key]}),
+                )
+        self.publish(
+            topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/state",
+            payload="{}",
+        )
+        self.publish(
+            topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/calib_pnts_dc",
+            payload="{}",
+        )
+        self.publish(
+            topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/calib_pnts_rf",
+            payload="{}",
+        )
+        self.publish(
+            topic=f"{self.topic_base_mass_filter}/cmnd/{self.device_name_mass_filter}/dc_offst",
+            payload="{}",
+        )
+        time.sleep(1)  # wait for the mass filter to respond
 
     def set_mz(self, mz: float) -> float | None:
         """
