@@ -11,7 +11,7 @@ log.addHandler(logging.NullHandler())
 
 log.setLevel(logging.INFO)
 
-TIMEOUT_CONFIRMATION = 1  # seconds
+TIMEOUT_CONFIRMATION = 2  # seconds
 
 
 def unique_confirmation_id() -> str:
@@ -31,11 +31,34 @@ class MSLogic:
 
         self.should_stop = None
         self.confirmation_events: dict[str, EventWithPayload] = {}
+        self.latest_detector_value = None  # For listen-only mode
         self.config = config
         self.topic_base_mass_filter = config["topic_base_mass_filter"]
-        self.topic_base_detector = config["topic_base_detector"]
         self.device_name_mass_filter = config["device_name_mass_filter"]
-        self.device_name_detector = config["device_name_detector"]
+        
+        # Detector configuration - support both new and legacy format
+        if "detector" in config:
+            detector_config = config["detector"]
+            self.detector_topic_cmnd = detector_config["topic_cmnd"]
+            self.detector_topic_response = detector_config["topic_response"]
+            self.detector_topic_error = detector_config["topic_error"]
+            self.detector_topic_settings_cmnd = detector_config["topic_settings_cmnd"]
+            self.detector_topic_settings_response = detector_config["topic_settings_response"]
+            self.detector_payload_key = detector_config.get("payload_key", "value")
+            self.detector_use_confirmation = detector_config.get("use_confirmation", True)
+            self.detector_confirmation_timeout = detector_config.get("confirmation_timeout", TIMEOUT_CONFIRMATION)
+        else:
+            # Legacy configuration
+            self.topic_base_detector = config["topic_base_detector"]
+            self.device_name_detector = config["device_name_detector"]
+            self.detector_topic_cmnd = f"{self.topic_base_detector}/cmnd/{self.device_name_detector}"
+            self.detector_topic_response = f"{self.topic_base_detector}/response/{self.device_name_detector}"
+            self.detector_topic_error = f"{self.topic_base_detector}/error/{self.device_name_detector}"
+            self.detector_topic_settings_cmnd = f"{self.topic_base_detector}/cmnd/settings"
+            self.detector_topic_settings_response = f"{self.topic_base_detector}/response/settings"
+            self.detector_payload_key = "value"
+            self.detector_use_confirmation = True
+            self.detector_confirmation_timeout = TIMEOUT_CONFIRMATION
 
         self.client = mqtt.Client(
             clean_session=True,
@@ -72,8 +95,10 @@ class MSLogic:
             f"{self.topic_base_mass_filter}/status/{self.device_name_mass_filter}/#"
         )
 
-        self.client.subscribe(f"{self.topic_base_detector}/response/#")
-        self.client.subscribe(f"{self.topic_base_detector}/error/#")
+        # Subscribe to detector topics using configurable paths
+        self.client.subscribe(self.detector_topic_response)
+        self.client.subscribe(self.detector_topic_error)
+        self.client.subscribe(self.detector_topic_settings_response)
 
     def on_message(self, client, userdata, message):
         topic = message.topic
@@ -86,13 +111,11 @@ class MSLogic:
         log.debug(f"Received message on topic {topic} with payload {payload}")
 
         if topic.startswith(
-            f"{self.topic_base_mass_filter}/error/{self.topic_base_detector}/"
+            f"{self.topic_base_mass_filter}/error/{self.device_name_mass_filter}/"
         ):
             raise Exception(f"Error from mass filter: {payload}")
 
-        elif topic.startswith(
-            f"{self.topic_base_detector}/error/{self.device_name_detector}/"
-        ):
+        elif topic == self.detector_topic_error:
             raise Exception(f"Error from detector: {payload}")
 
         elif topic.startswith(
@@ -118,12 +141,10 @@ class MSLogic:
         ):
             self.handle_response_state(payload)
 
-        elif topic.endswith(
-            f"{self.topic_base_detector}/response/{self.device_name_detector}"
-        ):
+        elif topic == self.detector_topic_response:
             self.handle_response_detector(payload)
 
-        elif topic.endswith(f"{self.topic_base_detector}/response/settings"):
+        elif topic == self.detector_topic_settings_response:
             self.handle_response_detector_settings(payload)
 
     def confirme_payload(self, payload):
@@ -195,13 +216,18 @@ class MSLogic:
 
     def publish_measure_signal(self):
         # publish MQTT message to measure the signal
-        confirmation_id = f"measure signal, ID={unique_confirmation_id()}"
-        self.register_confirmation(confirmation_id)
-        self.publish(
-            f"{self.topic_base_detector}/cmnd/{self.device_name_detector}",
-            json.dumps({"confirmation_id": confirmation_id}),
-        )
-        return confirmation_id
+        if self.detector_use_confirmation:
+            confirmation_id = f"measure signal, ID={unique_confirmation_id()}"
+            self.register_confirmation(confirmation_id)
+            self.publish(
+                self.detector_topic_cmnd,
+                json.dumps({"confirmation_id": confirmation_id}),
+            )
+            return confirmation_id
+        else:
+            # Listen-only mode: no confirmation needed
+            self.publish(self.detector_topic_cmnd, json.dumps({}))
+            return None
 
     # Mass filter responses
     def handle_response_mz(self, payload):
@@ -262,7 +288,14 @@ class MSLogic:
     # Detector responses
     def handle_response_detector(self, payload):
         # handle the response from the detector
-        self.confirme_payload(payload)
+        # Store the latest detector value for listen-only mode
+        if self.detector_payload_key in payload:
+            self.latest_detector_value = payload[self.detector_payload_key]
+            log.debug(f"Stored latest detector value: {self.latest_detector_value}")
+        
+        # Only process confirmation if enabled
+        if self.detector_use_confirmation:
+            self.confirme_payload(payload)
 
     def handle_response_detector_settings(self, payload):
         if "settings" in payload:
@@ -284,13 +317,13 @@ class MSLogic:
             )
 
             self.publish(
-                topic=f"{self.topic_base_detector}/cmnd/settings",
+                topic=self.detector_topic_settings_cmnd,
                 payload=json.dumps(metadata["current_settings"]),
             )
 
         # send empty payload to get the detector to respond with its settings
         self.publish(
-            topic=f"{self.topic_base_detector}/cmnd/settings",
+            topic=self.detector_topic_settings_cmnd,
             payload=b"",
         )
         time.sleep(1)  # wait for the detector to respond
@@ -349,20 +382,38 @@ class MSLogic:
         """
         Measures the signal and returns the value.
 
+        In confirmation mode: sends a command and waits for confirmation response.
+        In listen-only mode: sends a trigger command and returns the last received value.
+
         Returns:
             float: The measured signal value.
             None: If the signal value cannot be measured.
 
         Raises:
-            TimeoutError: If the confirmation is not received within the timeout.
+            TimeoutError: If the confirmation is not received within the timeout (confirmation mode only).
         """
         confirmation_id = self.publish_measure_signal()
-        payload = self.wait_for_confirmation(confirmation_id)
-        log.debug(f"Measured signal payload: {payload}")
-        if payload is not None and "value" in payload:
-            return payload["value"]
+        
+        if self.detector_use_confirmation and confirmation_id is not None:
+            # Confirmation mode: wait for response with confirmation
+            try:
+                payload = self.wait_for_confirmation(
+                    confirmation_id, 
+                    timeout=self.detector_confirmation_timeout
+                )
+            except TimeoutError as e:
+                log.error(f"Timeout while measuring signal: {e}")
+                return None
+            log.debug(f"Measured signal payload: {payload}")
+            if payload is not None and self.detector_payload_key in payload:
+                return payload[self.detector_payload_key]
+            else:
+                return None
         else:
-            return None
+            # Listen-only mode: return the last received value
+            # Give a small delay to allow the detector to respond
+            time.sleep(0.1)
+            return self.latest_detector_value
 
     def get_metadata_mass_filter_json(self):
         return json.dumps(self.metadata_mass_filter)

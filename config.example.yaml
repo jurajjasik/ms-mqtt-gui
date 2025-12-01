@@ -1,0 +1,77 @@
+# Example configuration file for MS MQTT GUI
+
+# ============================================================================
+# Detector Configuration (New - Fully Customizable)
+# ============================================================================
+# This section provides full control over detector MQTT topics and behavior
+
+detector:
+  # Command topic for triggering detector measurements
+  topic_cmnd: "lqt/picoscope/cmnd/trigger_rate"
+
+  # Response topic for receiving detector measurements
+  topic_response: "lqt/picoscope/response/trigger_rate"
+
+  # Error topic for detector error messages
+  topic_error: "lqt/picoscope/error/trigger_rate"
+
+  # Command topic for detector settings configuration
+  topic_settings_cmnd: "lqt/picoscope/cmnd/settings"
+
+  # Response topic for detector settings
+  topic_settings_response: "lqt/picoscope/response/settings"
+
+  # Key in the JSON payload that contains the signal value
+  # Example: if payload is {"value": 123.45}, set this to "value"
+  # Example: if payload is {"signal": 123.45}, set this to "signal"
+  payload_key: "value"
+
+  # Enable/disable confirmation logic
+  # - true: Use request/response pattern with confirmation_id
+  # - false: Listen-only mode - subscribe to topic and use latest value
+  use_confirmation: true
+
+  # Timeout in seconds for waiting for confirmation (only used if use_confirmation is true)
+  confirmation_timeout: 2
+
+# ============================================================================
+# Example: Listen-Only Mode Configuration
+# ============================================================================
+# Uncomment the following to use listen-only mode where the detector
+# continuously publishes values and the system reads the latest value
+#
+# detector:
+#   topic_cmnd: "lqt/detector/trigger"  # Optional trigger command
+#   topic_response: "lqt/detector/stream"  # Continuous data stream topic
+#   topic_error: "lqt/detector/error"
+#   topic_settings_cmnd: "lqt/detector/config"
+#   topic_settings_response: "lqt/detector/config/response"
+#   payload_key: "signal_value"  # Custom payload key
+#   use_confirmation: false  # No confirmation - just listen
+#   confirmation_timeout: 2  # Ignored when use_confirmation is false
+
+
+# ============================================================================
+# Legacy Detector Configuration (Deprecated)
+# ============================================================================
+# These settings are kept for backward compatibility
+# Use the "detector" section above for new configurations
+
+topic_base_detector: "lqt/picoscope"
+device_name_detector: "trigger_rate"
+
+# ============================================================================
+# Mass Filter Configuration
+# ============================================================================
+
+topic_base_mass_filter: "lqt/qsource3"
+device_name_mass_filter: "QSource3"
+
+# ============================================================================
+# MQTT Broker Configuration
+# ============================================================================
+
+mqtt_broker: "147.231.28.79"
+# mqtt_broker: "localhost"
+mqtt_port: 1883
+mqtt_connection_timeout: 60
