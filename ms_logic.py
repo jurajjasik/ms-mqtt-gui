@@ -35,7 +35,7 @@ class MSLogic:
         self.config = config
         self.topic_base_mass_filter = config["topic_base_mass_filter"]
         self.device_name_mass_filter = config["device_name_mass_filter"]
-        
+
         # Detector configuration - support both new and legacy format
         if "detector" in config:
             detector_config = config["detector"]
@@ -43,19 +43,35 @@ class MSLogic:
             self.detector_topic_response = detector_config["topic_response"]
             self.detector_topic_error = detector_config["topic_error"]
             self.detector_topic_settings_cmnd = detector_config["topic_settings_cmnd"]
-            self.detector_topic_settings_response = detector_config["topic_settings_response"]
+            self.detector_topic_settings_response = detector_config[
+                "topic_settings_response"
+            ]
             self.detector_payload_key = detector_config.get("payload_key", "value")
-            self.detector_use_confirmation = detector_config.get("use_confirmation", True)
-            self.detector_confirmation_timeout = detector_config.get("confirmation_timeout", TIMEOUT_CONFIRMATION)
+            self.detector_use_confirmation = detector_config.get(
+                "use_confirmation", True
+            )
+            self.detector_confirmation_timeout = detector_config.get(
+                "confirmation_timeout", TIMEOUT_CONFIRMATION
+            )
         else:
             # Legacy configuration
             self.topic_base_detector = config["topic_base_detector"]
             self.device_name_detector = config["device_name_detector"]
-            self.detector_topic_cmnd = f"{self.topic_base_detector}/cmnd/{self.device_name_detector}"
-            self.detector_topic_response = f"{self.topic_base_detector}/response/{self.device_name_detector}"
-            self.detector_topic_error = f"{self.topic_base_detector}/error/{self.device_name_detector}"
-            self.detector_topic_settings_cmnd = f"{self.topic_base_detector}/cmnd/settings"
-            self.detector_topic_settings_response = f"{self.topic_base_detector}/response/settings"
+            self.detector_topic_cmnd = (
+                f"{self.topic_base_detector}/cmnd/{self.device_name_detector}"
+            )
+            self.detector_topic_response = (
+                f"{self.topic_base_detector}/response/{self.device_name_detector}"
+            )
+            self.detector_topic_error = (
+                f"{self.topic_base_detector}/error/{self.device_name_detector}"
+            )
+            self.detector_topic_settings_cmnd = (
+                f"{self.topic_base_detector}/cmnd/settings"
+            )
+            self.detector_topic_settings_response = (
+                f"{self.topic_base_detector}/response/settings"
+            )
             self.detector_payload_key = "value"
             self.detector_use_confirmation = True
             self.detector_confirmation_timeout = TIMEOUT_CONFIRMATION
@@ -289,10 +305,13 @@ class MSLogic:
     def handle_response_detector(self, payload):
         # handle the response from the detector
         # Store the latest detector value for listen-only mode
-        if self.detector_payload_key in payload:
-            self.latest_detector_value = payload[self.detector_payload_key]
-            log.debug(f"Stored latest detector value: {self.latest_detector_value}")
-        
+        if "statistics" in payload and len(payload["statistics"]) > 0:
+            if self.detector_payload_key in payload["statistics"][0]:
+                self.latest_detector_value = payload["statistics"][0][
+                    self.detector_payload_key
+                ]
+                log.debug(f"Stored latest detector value: {self.latest_detector_value}")
+
         # Only process confirmation if enabled
         if self.detector_use_confirmation:
             self.confirme_payload(payload)
@@ -393,13 +412,12 @@ class MSLogic:
             TimeoutError: If the confirmation is not received within the timeout (confirmation mode only).
         """
         confirmation_id = self.publish_measure_signal()
-        
+
         if self.detector_use_confirmation and confirmation_id is not None:
             # Confirmation mode: wait for response with confirmation
             try:
                 payload = self.wait_for_confirmation(
-                    confirmation_id, 
-                    timeout=self.detector_confirmation_timeout
+                    confirmation_id, timeout=self.detector_confirmation_timeout
                 )
             except TimeoutError as e:
                 log.error(f"Timeout while measuring signal: {e}")
